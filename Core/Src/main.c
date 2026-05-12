@@ -20,6 +20,7 @@
 #include "main.h"
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include "fonts.h"
 #define LCD_WIDTH  80  // Landscape
 #define LCD_HEIGHT 260  // Landscape
@@ -69,16 +70,34 @@ static void MX_ADC1_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
+struct Node {
+    int x;
+    int y;
+    struct Node* next;
+};
+struct Node *starList = NULL;
+int score = 0;
+int Delay = 500;
+uint8_t starsize = 5;
 void LCD_Init(void);
 void Lcdclose(void);
 void LcdOpen(void);
 void LCD_DataMode(uint8_t pin);
 void LCD_CommandMode(uint8_t data);
+
 void LCD_Fill(uint16_t color);
 void LCD_SetAddressWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
 void DrawPixel(uint16_t x, uint16_t y, uint16_t color);
 void DrawChar(uint16_t x, uint16_t y, char ch, sFONT font, uint16_t color ,uint16_t bgcolor);
 void DrawString(uint16_t x, uint16_t y,  char* str, sFONT font, uint16_t color,uint16_t bgcolor);
+
+
+void movingStars(void);
+void EraseArea(uint16_t x, uint16_t y);
+struct Node* createStar( uint32_t startrandomX, uint32_t endrandomX);
+void PrintStars(struct Node *head);
+void moveStar(struct Node *head);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -121,7 +140,7 @@ int main(void)
   MX_USART2_UART_Init();
   LCD_Fill(0x0010);
   uint16_t GAMEON =0;
-  uint16_t waseraset =0;
+
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -130,15 +149,25 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+	  char scoreBuf[10];
+	  sprintf(scoreBuf, "%d", score);
+
     /* USER CODE END WHILE */
 	  if( GAMEON == 0){ DrawString(60, 5, "press C to start", Font12, 0xFFFF,0x0010);}else{
 
 
-		  DrawString(60, 5, "game on", Font12, 0xFFFF,0x0010);
+
+		  movingStars();
+		  DrawString(90, 35, scoreBuf, Font8, 0xFFFF, 0x0011);
+			score += 1;
+			HAL_Delay(Delay);
+			Delay -= 1;
 	  }
 
 	  if(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_RESET) {
 		  GAMEON = 1;
+		  LCD_Fill(0x0010);
+		 DrawString( 90, 5, "score", Font8, 0xFFFF,0x0010);
 	  	      }
 	  /* USER CODE BEGIN 3 */
   }
@@ -483,12 +512,122 @@ void DrawChar(uint16_t x, uint16_t y, char ch, sFONT font, uint16_t color ,uint1
 }
 
 void DrawString(uint16_t x, uint16_t y, char* str, sFONT font, uint16_t color,uint16_t bgcolor) {
+
+
     while(*str) {
         DrawChar(x, y, *str, font, color,bgcolor);
         y += font.Width;
         str++;
     }
 }
+
+
+
+
+void movingStars(){
+	if ((rand() % 10) == 0) {
+	        struct Node *newStar = createStar(rand() % 85, 0);
+	        if (newStar != NULL) {
+	            newStar->next = starList;
+	            starList = newStar;
+	        }
+	    }moveStar(starList);
+
+
+
+	}
+
+struct Node* createStar( uint32_t startrandomX, uint32_t endrandomX){
+
+	 struct Node *newNode = (struct Node *)malloc(sizeof(struct Node));
+	 if (newNode == NULL) return NULL;
+			 newNode->y =0;
+			 newNode->x =startrandomX;;
+			 newNode->next = NULL;
+			 return newNode;
+}
+
+
+
+
+void moveStar(struct Node *head){
+	struct Node *temp = head;
+	while (temp != NULL){
+		temp->y += 5;
+		temp = temp->next;
+	}
+	PrintStars(head);
+}
+
+void PrintStars(struct Node *head){
+
+
+	uint8_t data[] = { (uint8_t)(0xFFFF >> 8), (uint8_t)(0xFF & 0xFF) };
+	struct Node *temp = head;
+
+	while(temp != NULL){
+		EraseArea(temp->x, temp->y);
+	    // Set Column Address
+	    LCD_CommandMode(0x2A);
+	    LCD_DataMode(0x00); LCD_DataMode(temp->x);
+	    LCD_DataMode(0x00); LCD_DataMode((temp->x)+starsize-1);
+
+	    // Set Row Address
+	    LCD_CommandMode(0x2B);
+	    LCD_DataMode(0x00); LCD_DataMode(temp->y);
+	    LCD_DataMode(0x00); LCD_DataMode((temp->y)+starsize-1);
+
+	    LCD_CommandMode(0x2C); // RAM Write
+
+	    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+	    LcdOpen();
+	    for(int i = 0; i < (starsize * starsize); i++) {
+	        HAL_SPI_Transmit(&hspi1, data, 2, HAL_MAX_DELAY);
+	    }
+	    Lcdclose();
+
+	    temp = temp->next;
+	}
+
+}
+
+void EraseArea(uint16_t x, uint16_t y){
+
+
+	uint8_t data[] = { 0x10, 0x00 };
+	// Set Column Address
+	    LCD_CommandMode(0x2A);
+	    LCD_DataMode(0x00); LCD_DataMode(x );
+	    LCD_DataMode(0x00); LCD_DataMode((x + starsize - 1));
+
+	    // Set Row Address
+	    LCD_CommandMode(0x2B);
+	    LCD_DataMode(0x00); LCD_DataMode(y-6);
+	    LCD_DataMode(0x00); LCD_DataMode((y + starsize - 6) );
+
+	    LCD_CommandMode(0x2C); // RAM Write
+
+
+	    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+	    LcdOpen();
+	    for(int i = 0; i < (starsize * starsize); i++) {
+	        HAL_SPI_Transmit(&hspi1, data, 2, HAL_MAX_DELAY);
+	    }
+	    Lcdclose();
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
 
 /* USER CODE END 4 */
 
