@@ -18,28 +18,27 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include "fonts.h"
-#define LCD_WIDTH  80  // Landscape
-#define LCD_HEIGHT 260  // Landscape
-#define X_OFFSET   1
-#define Y_OFFSET   26
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+#define LCD_WIDTH   80
+#define LCD_HEIGHT  260
+#define X_OFFSET    1
+#define Y_OFFSET    26
+
 #define ST7735_CS_GPIO_Port  GPIOB
 #define ST7735_CS_Pin        GPIO_PIN_14
 #define ST7735_DC_GPIO_Port  GPIOB
 #define ST7735_DC_Pin        GPIO_PIN_13
 #define ST7735_RES_GPIO_Port GPIOB
 #define ST7735_RES_Pin       GPIO_PIN_15
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
-
-/* USER CODE END Includes */
-
-/* Private typedef -----------------------------------------------------------*/
-/* USER CODE BEGIN PTD */
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -77,26 +76,30 @@ struct Node {
 };
 struct Node *starList = NULL;
 int score = 0;
-int Delay = 500;
+int Delay = 300;
 uint8_t starsize = 5;
+uint32_t adc_raw_val = 0;
+float joystick_x = 0.0;
+float alpha = 0.15;
+int deadzone = 8;
 void LCD_Init(void);
 void Lcdclose(void);
 void LcdOpen(void);
 void LCD_DataMode(uint8_t pin);
 void LCD_CommandMode(uint8_t data);
-
+void freeLinkedList(struct Node* head);
 void LCD_Fill(uint16_t color);
 void LCD_SetAddressWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
 void DrawPixel(uint16_t x, uint16_t y, uint16_t color);
 void DrawChar(uint16_t x, uint16_t y, char ch, sFONT font, uint16_t color ,uint16_t bgcolor);
 void DrawString(uint16_t x, uint16_t y,  char* str, sFONT font, uint16_t color,uint16_t bgcolor);
-
-
+void LCD_courser(uint8_t x, uint8_t y, uint16_t color);
+uint16_t GAMEON =0;
 void movingStars(void);
 void EraseArea(uint16_t x, uint16_t y);
 struct Node* createStar( uint32_t startrandomX, uint32_t endrandomX);
-void PrintStars(struct Node *head);
-void moveStar(struct Node *head);
+void PrintStars(struct Node *head,uint8_t x, uint8_t y);
+struct Node* moveStar(struct Node *head);
 
 /* USER CODE END PFP */
 
@@ -139,8 +142,16 @@ int main(void)
   LCD_Init();
   MX_USART2_UART_Init();
   LCD_Fill(0x0010);
-  uint16_t GAMEON =0;
 
+
+  uint32_t x_raw = 2048;
+  uint32_t y_raw = 2048;
+  int old_x = 40;
+  int old_y = 90;
+  int x_center_offset = 2150;
+   int y_center_offset = 1900;
+   int deadzone =10;
+   uint32_t lastGameUpdateTime = 0;
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -150,26 +161,76 @@ int main(void)
   while (1)
   {
 	  char scoreBuf[10];
-	  sprintf(scoreBuf, "%d", score);
+	 sprintf(scoreBuf, "%d", score);
+	      uint32_t x_sum = 0, y_sum = 0;
+	      int samples = 8;
 
-    /* USER CODE END WHILE */
-	  if( GAMEON == 0){ DrawString(60, 5, "press C to start", Font12, 0xFFFF,0x0010);}else{
+	      for(int i = 0; i < samples; i++) {
+	          HAL_ADC_Start(&hadc1);
+	          HAL_ADC_PollForConversion(&hadc1, 5);
+	          x_sum += HAL_ADC_GetValue(&hadc1);
+	          HAL_ADC_PollForConversion(&hadc1, 5);
+	          y_sum += HAL_ADC_GetValue(&hadc1);
+	      }
+
+	      x_raw = x_sum / samples;
+	      y_raw = y_sum / samples;
+
+	      int x_relative = (int)x_raw - x_center_offset;
+	      int y_relative = (int)y_raw - y_center_offset;
+
+	      if (abs(x_relative) < deadzone) x_relative = 0;
+	      if (abs(y_relative) < deadzone) y_relative = 0;
+
+	      int new_x = 70 + (x_relative * 70) / 2048;
+	      int new_y = 70 + (y_relative * 70) / 2048;
+
+	      if (new_x != old_x || new_y != old_y) {
+	          LCD_courser(old_x, old_y, 0x0010);
+	          LCD_courser(new_x, new_y, 0xFF00);
+	          old_x = new_x;
+	          old_y = new_y;
+	      }
+
+	      struct Node *head= moveStar(starList);
+	      if (GAMEON == 0) {
+	          DrawString(60, 5, "press C to start", Font12, 0xFFFF, 0x0010);
+	      } else {
 
 
+	    	  PrintStars(head,new_x, new_y);
+	    	  score += 1;
+	    	  DrawString(90, 35, scoreBuf, Font8, 0xFFFF, 0x0011);
+	          if (HAL_GetTick() - lastGameUpdateTime >= Delay) {
+	              Delay -= 1;
+	              movingStars();
+	              lastGameUpdateTime = HAL_GetTick();
+	          }
+	      }
 
-		  movingStars();
-		  DrawString(90, 35, scoreBuf, Font8, 0xFFFF, 0x0011);
-			score += 1;
-			HAL_Delay(Delay);
-			Delay -= 1;
-	  }
+	      if (GAMEON == 2) {
+	     		  freeLinkedList(head);
+	     		      starList = NULL;
 
-	  if(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_RESET) {
-		  GAMEON = 1;
-		  LCD_Fill(0x0010);
-		 DrawString( 90, 5, "score", Font8, 0xFFFF,0x0010);
-	  	      }
-	  /* USER CODE BEGIN 3 */
+	     		       Delay = 300;
+	     		       GAMEON = 0;
+	     		       LCD_Fill(0x0010);
+	     		       DrawString(60, 5, "GAME OVER", Font12, 0xFFFF, 0x0010);
+	     		       DrawString(50, 5, "score", Font12, 0xFFFF, 0x0010);
+	     		       DrawString(50, 55, scoreBuf, Font12, 0xFFFF, 0x0011);
+	     		       lastGameUpdateTime = HAL_GetTick();
+	     		       score = 0;
+	     		       HAL_Delay(700);
+	     		       LCD_Fill(0x0010);
+	     		      }
+
+	      if(HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_RESET) {
+	          GAMEON = 1;
+	          LCD_Fill(0x0010);
+	          DrawString(90, 5, "score", Font8, 0xFFFF, 0x0010);
+	          lastGameUpdateTime = HAL_GetTick();
+	      }
+
   }
   /* USER CODE END 3 */
 }
@@ -238,13 +299,13 @@ static void MX_ADC1_Init(void)
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV2;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc1.Init.ScanConvMode = DISABLE;
+  hadc1.Init.ScanConvMode = ENABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.NbrOfConversion = 2;
   hadc1.Init.DMAContinuousRequests = DISABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
@@ -254,13 +315,28 @@ static void MX_ADC1_Init(void)
 
   /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
-  sConfig.Channel = ADC_CHANNEL_1;
-  sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
+
+
+
+    /** Configure for the first channel (X-axis on PA1)
+    */
+    sConfig.Channel = ADC_CHANNEL_1;
+    sConfig.Rank = 1;
+    sConfig.SamplingTime = ADC_SAMPLETIME_144CYCLES;
+    if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+    {
+      Error_Handler();
+    }
+
+    /** Configure for the second channel (Y-axis on PB1)
+    */
+    sConfig.Channel = ADC_CHANNEL_9;
+    sConfig.Rank = 2;
+    sConfig.SamplingTime = ADC_SAMPLETIME_144CYCLES;
+    if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+    {
+      Error_Handler();
+    }
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
@@ -525,15 +601,14 @@ void DrawString(uint16_t x, uint16_t y, char* str, sFONT font, uint16_t color,ui
 
 
 void movingStars(){
+
 	if ((rand() % 10) == 0) {
 	        struct Node *newStar = createStar(rand() % 85, 0);
 	        if (newStar != NULL) {
 	            newStar->next = starList;
 	            starList = newStar;
 	        }
-	    }moveStar(starList);
-
-
+	    }
 
 	}
 
@@ -550,22 +625,26 @@ struct Node* createStar( uint32_t startrandomX, uint32_t endrandomX){
 
 
 
-void moveStar(struct Node *head){
+struct Node* moveStar(struct Node *head){
 	struct Node *temp = head;
 	while (temp != NULL){
 		temp->y += 5;
 		temp = temp->next;
 	}
-	PrintStars(head);
+	return head;
+
 }
 
-void PrintStars(struct Node *head){
+void PrintStars(struct Node *head,uint8_t x, uint8_t y){
 
 
 	uint8_t data[] = { (uint8_t)(0xFFFF >> 8), (uint8_t)(0xFF & 0xFF) };
 	struct Node *temp = head;
 
 	while(temp != NULL){
+        int offset = 4;
+        if(temp->y == 250){temp->y=0;}
+        if(temp->y == 0){temp->x=(rand() % 85);}
 		EraseArea(temp->x, temp->y);
 	    // Set Column Address
 	    LCD_CommandMode(0x2A);
@@ -585,7 +664,14 @@ void PrintStars(struct Node *head){
 	        HAL_SPI_Transmit(&hspi1, data, 2, HAL_MAX_DELAY);
 	    }
 	    Lcdclose();
+	    if (x < temp->x + starsize+offset &&
+	                x + starsize+offset > temp->x &&
+	                y < temp->y + starsize+offset &&
+	                y + starsize+offset > temp->y) {
 
+	                GAMEON = 2;
+	                return;
+	            }
 	    temp = temp->next;
 	}
 
@@ -620,11 +706,45 @@ void EraseArea(uint16_t x, uint16_t y){
 }
 
 
+void LCD_courser(uint8_t x, uint8_t y, uint16_t color) {
+    uint16_t size = starsize;
+    uint8_t data[] = {color & 0xFF, color >> 8};
+
+
+    if (x > 80 ) x = 80;
+    if ( x < 30) x = 30;
+    if (y > 250) y = 250;
+
+    LCD_CommandMode(0x2A);
+    LCD_DataMode(0x00); LCD_DataMode(x);
+    LCD_DataMode(0x00); LCD_DataMode(x + size - 1);
+
+    LCD_CommandMode(0x2B);
+    LCD_DataMode(0x00); LCD_DataMode(y);
+    LCD_DataMode(0x00); LCD_DataMode(y + size - 1);
+
+    LCD_CommandMode(0x2C);
+
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+    LcdOpen();
+    for(int i = 0; i < (size * size); i++) {
+        HAL_SPI_Transmit(&hspi1, data, 2, HAL_MAX_DELAY);
+    }
+    Lcdclose();
+}
 
 
 
+void freeLinkedList(struct Node* head) {
+	struct Node* current = head;
+	struct Node* nextNode = NULL;
 
-
+    while (current != NULL) {
+        nextNode = current->next;
+        free(current);
+        current = nextNode;
+    }
+}
 
 
 
